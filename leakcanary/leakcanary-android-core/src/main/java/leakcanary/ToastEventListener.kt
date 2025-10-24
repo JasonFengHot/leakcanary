@@ -3,11 +3,13 @@ package leakcanary
 import android.app.AlertDialog
 import android.content.DialogInterface
 import android.content.Intent
+import android.util.Log
 import com.squareup.leakcanary.core.R
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit.SECONDS
 import leakcanary.EventListener.Event
 import leakcanary.EventListener.Event.DumpingHeap
+import leakcanary.EventListener.Event.HeapAnalysisProgress
 import leakcanary.EventListener.Event.HeapDump
 import leakcanary.EventListener.Event.HeapDumpFailed
 import leakcanary.internal.InternalLeakCanary
@@ -29,6 +31,9 @@ object ToastEventListener : EventListener {
           toastCurrentlyShown?.cancel()
           toastCurrentlyShown = null
         }
+      }
+      is HeapAnalysisProgress -> {
+        Log.d("LeakCanary", "progress -> ${event.progressPercent}")
       }
       else -> {}
     }
