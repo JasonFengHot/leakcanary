@@ -6,6 +6,7 @@ import kotlinx.validation.ApiValidationExtension
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.dokka.gradle.DokkaTask
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.publish.PublishingExtension
 
 buildscript {
   repositories {
@@ -151,9 +152,51 @@ configure(subprojects.filter {
   }
 
   pluginManager.withPlugin("com.vanniktech.maven.publish") {
+    // Read private Nexus configuration from gradle.properties or environment
+    val nexusReleaseUrl =
+      (rootProject.findProperty("NEXUS_RELEASE_URL") as String?) ?: System.getenv("NEXUS_RELEASE_URL")
+    val nexusSnapshotUrl =
+      (rootProject.findProperty("NEXUS_SNAPSHOT_URL") as String?) ?: System.getenv("NEXUS_SNAPSHOT_URL")
+    val nexusUrlFallback =
+      (rootProject.findProperty("NEXUS_URL") as String?) ?: System.getenv("NEXUS_URL")
+    val nexusUsername =
+      (rootProject.findProperty("NEXUS_USERNAME") as String?) ?: System.getenv("NEXUS_USERNAME")
+    val nexusPassword =
+      (rootProject.findProperty("NEXUS_PASSWORD") as String?) ?: System.getenv("NEXUS_PASSWORD")
+
+    val privateNexusConfigured =
+      !listOf(nexusReleaseUrl, nexusSnapshotUrl, nexusUrlFallback).all { it.isNullOrBlank() }
+
+    // If no private Nexus is configured, keep default Maven Central + signing.
+    // Otherwise, configure publishing repositories for the private Nexus and skip Central/signing.
     extensions.configure<MavenPublishBaseExtension> {
-      publishToMavenCentral(SonatypeHost.S01)
-      signAllPublications()
+      if (!privateNexusConfigured) {
+        publishToMavenCentral(SonatypeHost.S01)
+        signAllPublications()
+      }
+    }
+
+    if (privateNexusConfigured) {
+      val isSnapshot = version.toString().endsWith("SNAPSHOT", ignoreCase = true)
+      val targetUrl = if (isSnapshot) {
+        (nexusSnapshotUrl ?: nexusUrlFallback)
+      } else {
+        (nexusReleaseUrl ?: nexusUrlFallback)
+      }
+      if (!targetUrl.isNullOrBlank()) {
+        extensions.configure<PublishingExtension> {
+          repositories {
+            maven {
+              name = if (isSnapshot) "privateNexusSnapshots" else "privateNexusReleases"
+              url = uri(targetUrl)
+              credentials {
+                if (!nexusUsername.isNullOrBlank()) username = nexusUsername
+                if (!nexusPassword.isNullOrBlank()) password = nexusPassword
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
