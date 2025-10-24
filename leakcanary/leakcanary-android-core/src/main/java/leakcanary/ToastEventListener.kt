@@ -1,9 +1,10 @@
 package leakcanary
 
 import android.app.AlertDialog
-import android.content.DialogInterface
 import android.content.Intent
-import android.util.Log
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.TextView
 import com.squareup.leakcanary.core.R
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit.SECONDS
@@ -19,23 +20,39 @@ import leakcanary.internal.friendly.mainHandler
 object ToastEventListener : EventListener {
 
   // Only accessed from the main thread
-  private var toastCurrentlyShown: DialogInterface? = null
+  private var toastCurrentlyShown: AlertDialog? = null
+  private var toastTextView: TextView? = null
 
   override fun onEvent(event: Event) {
     when (event) {
       is DumpingHeap -> {
         showToastBlocking()
       }
-      is HeapDump, is HeapDumpFailed -> {
+
+      is HeapDump -> {
         mainHandler.post {
-          toastCurrentlyShown?.cancel()
-          toastCurrentlyShown = null
+          toastTextView?.setText("HeapDump ...")
         }
       }
-      is HeapAnalysisProgress -> {
-        Log.d("LeakCanary", "progress -> ${event.progressPercent}")
+
+      is HeapDumpFailed -> {
+        mainHandler.post {
+          toastTextView?.setText("HeapDumpFailed ...")
+        }
       }
-      else -> {}
+
+      is HeapAnalysisProgress -> {
+        mainHandler.post {
+          toastTextView?.setText("Analyzing heap dump... ${event.progressPercent * 100}%")
+        }
+      }
+
+      is Event.HeapAnalysisDone<*> -> {
+        mainHandler.post {
+          toastTextView?.setText("Analyzing heap dump... 100%")
+          toastCurrentlyShown?.getButton(AlertDialog.BUTTON_POSITIVE)?.visibility = View.VISIBLE
+        }
+      }
     }
   }
 
@@ -50,20 +67,32 @@ object ToastEventListener : EventListener {
         return@Runnable
       }
 
-      AlertDialog.Builder(resumedActivity)
+      val inflater = LayoutInflater.from(resumedActivity)
+      val dialogView = inflater.inflate(R.layout.leak_canary_heap_dump_toast, null)
+
+      // Store reference to the TextView for progress updates
+      toastTextView = dialogView.findViewById(R.id.leak_canary_toast_text)
+
+      val dialog = AlertDialog.Builder(resumedActivity)
         .setTitle(resumedActivity.packageName)
         .setIcon(R.drawable.leak_canary_icon)
-        .setMessage(R.string.leak_canary_toast_heap_dump)
+        .setView(dialogView)
+        .setCancelable(false)
         .setPositiveButton(
           "View Details"
         ) { dialog, which ->
-          toastCurrentlyShown = dialog
           waitingForToast.countDown()
           val intent = Intent()
           intent.setClass(resumedActivity.application, LeakActivity::class.java)
           resumedActivity.startActivity(intent)
+
+          toastCurrentlyShown?.cancel()
+          toastCurrentlyShown = null
+          toastTextView = null
         }
         .show()
+      dialog.getButton(AlertDialog.BUTTON_POSITIVE).visibility = View.INVISIBLE
+      toastCurrentlyShown = dialog
     })
     waitingForToast.await(5, SECONDS)
   }
